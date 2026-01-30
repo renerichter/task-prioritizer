@@ -10,6 +10,7 @@ from task_prioritizer.main import (
     get_execution_symbol,
     get_surprise_symbol,
     get_planned_symbol,
+    get_recurrent_symbol,
     format_output,
     parse_ratings,
     run_with_ratings,
@@ -64,6 +65,12 @@ class TestParseTask:
         assert tags == "{p0:45}{P:Web}"
         assert text == "write a first draft"
         assert minutes == 45
+
+    def test_task_with_new_format_symbols(self):
+        tags, text, minutes = parse_task("⭐️-🎁🔁-🗓️{p0:45} task")
+        assert tags == "{p0:45}"
+        assert text == "task"
+
 
     def test_task_with_time_in_middle_of_tags(self):
         tags, text, minutes = parse_task("{P:Web}{p2:00}{priority:high} big task")
@@ -388,16 +395,18 @@ class TestFormatOutput:
             impact_sym="⭐️⭐️⭐️",
             surprise_sym="🎁",
             planned_sym="🗓️",
+            recurrent_sym="🔁",
             tags="{p1:00}{P:Web}",
             text="write a first draft"
         )
-        assert result == "⭐️⭐️⭐️🎁--🗓️{p1:00}{P:Web} write a first draft"
+        assert result == "⭐️⭐️⭐️-🎁🔁-🗓️{p1:00}{P:Web} write a first draft"
 
     def test_output_with_stars_no_surprise(self):
         result = format_output(
             impact_sym="⭐️⭐️",
             surprise_sym="",
             planned_sym="🗓️",
+            recurrent_sym="",
             tags="{P:Code}",
             text="fix bug"
         )
@@ -408,26 +417,29 @@ class TestFormatOutput:
             impact_sym="",
             surprise_sym="🎁",
             planned_sym="🎲",
+            recurrent_sym="",
             tags="",
             text="explore idea"
         )
-        assert result == "🎁--🎲 explore idea"
+        assert result == "-🎁-🎲 explore idea"
 
     def test_output_no_stars_no_surprise(self):
         result = format_output(
             impact_sym="",
             surprise_sym="",
             planned_sym="🗓️",
+            recurrent_sym="",
             tags="{p0:30}",
             text="quick task"
         )
-        assert result == "🗓️{p0:30} quick task"
+        assert result == "--🗓️{p0:30} quick task"
 
     def test_output_no_tags(self):
         result = format_output(
             impact_sym="⭐️",
             surprise_sym="",
             planned_sym="🎲",
+            recurrent_sym="",
             tags="",
             text="something"
         )
@@ -476,12 +488,14 @@ class TestEndToEndScenarios:
         execution_sym = get_execution_symbol(execution)
         surprise_sym = get_surprise_symbol(0.0)
         planned_sym = get_planned_symbol(1.0)
+        recurrent_sym = get_recurrent_symbol(0.0)
 
         assert impact_sym == "⭐️⭐️⭐️"
         assert urgency_sym == "🚨"
         assert execution_sym == "🥵"
         assert surprise_sym == ""
         assert planned_sym == "🗓️"
+        assert recurrent_sym == ""
 
     def test_low_impact_calm_easy_spontaneous_task(self):
         impact = compute_impact(0.0, 0.0, 0.0)
@@ -493,6 +507,7 @@ class TestEndToEndScenarios:
         execution_sym = get_execution_symbol(execution)
         surprise_sym = get_surprise_symbol(0.0)
         planned_sym = get_planned_symbol(0.0)
+        recurrent_sym = get_recurrent_symbol(0.0)
 
         assert impact_sym == ""
         assert urgency_sym == "🐢"
@@ -510,15 +525,16 @@ class TestEndToEndScenarios:
         execution_sym = get_execution_symbol(execution)
         surprise_sym = get_surprise_symbol(1.0)
         planned_sym = get_planned_symbol(0.3)
+        recurrent_sym = get_recurrent_symbol(0.0)
 
         assert impact_sym == "⭐️"
         assert urgency_sym == "🐢"
         assert surprise_sym == "🎁"
         assert planned_sym == "🎲"
 
-        output = format_output(impact_sym, surprise_sym, planned_sym, "", "explore new tool")
+        output = format_output(impact_sym, surprise_sym, planned_sym, recurrent_sym, "", "explore new tool")
         assert "🎁" in output
-        assert "⭐️🎁--🎲" in output
+        assert "⭐️-🎁-🎲" in output
 
     def test_deadline_driven_task(self):
         impact = compute_impact(0.6, 0.3, 0.3)
@@ -539,23 +555,28 @@ class TestParseRatings:
     def test_valid_ratings_all_zeros(self):
         ratings = parse_ratings("0,0,0,0,0,0,0,0,0,0,0")
         assert ratings is not None
-        assert len(ratings) == 11
+        assert len(ratings) == 12
         assert all(r == 0.0 for r in ratings)
 
     def test_valid_ratings_all_threes(self):
         ratings = parse_ratings("3,3,3,3,3,3,3,3,3,3,3")
         assert ratings is not None
-        assert len(ratings) == 11
-        assert all(r == 1.0 for r in ratings)
+        assert len(ratings) == 12
+        assert all(r == 1.0 for r in ratings[:11])
+        assert ratings[11] == 0.0  # Default Rec
 
     def test_valid_ratings_mixed(self):
         ratings = parse_ratings("3,2,1,0,2,1,0,3,2,1,0")
         assert ratings is not None
-        assert len(ratings) == 11
+        assert len(ratings) == 12
         assert ratings[0] == 1.0
         assert ratings[1] == 0.6
-        assert ratings[2] == 0.3
-        assert ratings[3] == 0.0
+
+    def test_valid_ratings_with_recurrent(self):
+        ratings = parse_ratings("3,2,1,0,2,1,0,3,2,1,0,3")
+        assert ratings is not None
+        assert len(ratings) == 12
+        assert ratings[11] == 1.0
 
     def test_auto_time_placeholder(self):
         ratings = parse_ratings("3,2,1,0,2,1,_,0,3,2,1", planned_mins=45)
@@ -571,7 +592,7 @@ class TestParseRatings:
         assert ratings is None
 
     def test_invalid_too_many_values(self):
-        ratings = parse_ratings("3,2,1,0,2,1,0,3,2,1,0,1")
+        ratings = parse_ratings("3,2,1,0,2,1,0,3,2,1,0,1,0")
         assert ratings is None
 
     def test_invalid_rating_value(self):
@@ -581,7 +602,7 @@ class TestParseRatings:
     def test_ignores_spaces(self):
         ratings = parse_ratings("3, 2, 1, 0, 2, 1, 0, 3, 2, 1, 0")
         assert ratings is not None
-        assert len(ratings) == 11
+        assert len(ratings) == 12
 
 
 class TestBatchPrompt:
@@ -591,19 +612,19 @@ class TestBatchPrompt:
     """
 
     def test_prompt_batch_ratings_valid(self, monkeypatch):
-        inputs = iter(["3,2,1,0,2,1,_,0,1,0,2"])
+        inputs = iter(["3,2,1,0,2,1,_,0,1,0,2,0"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
         ratings = prompt_batch_ratings(planned_mins=45)
-        assert len(ratings) == 11
+        assert len(ratings) == 12
         assert ratings[6] == Config.RATING_MAP['1']
 
     def test_prompt_batch_ratings_retry_on_invalid(self, monkeypatch, capsys):
-        inputs = iter(["1,2", "0,0,0,0,0,0,0,0,0,0,0"])
+        inputs = iter(["1,2", "0,0,0,0,0,0,0,0,0,0,0,0"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
         ratings = prompt_batch_ratings(planned_mins=None)
-        assert len(ratings) == 11
+        assert len(ratings) == 12
         out = capsys.readouterr().out
-        assert "Use 11 values" in out
+        assert "Use 11 or 12 values" in out
 
 
 class TestGroupedBatchPrompt:
@@ -617,34 +638,27 @@ class TestGroupedBatchPrompt:
             "3,2,1",      # Impact: L,Conf,G
             "2,1",        # Urgency: P,D
             "1,0,2,1",    # Execution: C,T,R,F
-            "0,3",        # Clarity: S,Pl
+            "0,3,0",      # Clarity: S,Pl,Rec
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
         ratings = prompt_grouped_batch_ratings(planned_mins=None)
-        assert len(ratings) == 11
+        assert len(ratings) == 12
         assert ratings[0] == 1.0   # L=3
-        assert ratings[1] == 0.6   # Conf=2
-        assert ratings[2] == 0.3   # G=1
-        assert ratings[3] == 0.6   # P=2
-        assert ratings[4] == 0.3   # D=1
-        assert ratings[5] == 0.3   # C=1
-        assert ratings[6] == 0.0   # T=0
-        assert ratings[7] == 0.6   # R=2
-        assert ratings[8] == 0.3   # F=1
-        assert ratings[9] == 0.0   # S=0
         assert ratings[10] == 1.0  # Pl=3
+        assert ratings[11] == 0.0  # Rec=0
 
     def test_prompt_grouped_batch_with_auto_time(self, monkeypatch):
         inputs = iter([
             "3,2,1",
             "2,1",
             "1,_,2,1",    # T=_ auto-filled
-            "0,3",
+            "0,3,1",      # Clarity: S,Pl,Rec
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
         ratings = prompt_grouped_batch_ratings(planned_mins=45)
-        assert len(ratings) == 11
+        assert len(ratings) == 12
         assert ratings[6] == Config.RATING_MAP['1']  # 45 mins → score 1
+        assert ratings[11] == 0.3 # Rec=1
 
 
 class TestRunWithRatings:
@@ -654,46 +668,48 @@ class TestRunWithRatings:
     """
 
     def test_high_impact_task(self):
-        ratings = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        ratings = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
         result = run_with_ratings("important task", ratings)
         assert "⭐️⭐️⭐️" in result['output']
         assert result['urgency_sym'] == "🐢"
         assert result['execution_sym'] == "🍭"
 
     def test_urgent_task(self):
-        ratings = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        ratings = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         result = run_with_ratings("urgent task", ratings)
         assert result['urgency_sym'] == "🚨"
 
     def test_surprise_task(self):
-        ratings = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        ratings = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
         result = run_with_ratings("unclear task", ratings)
         assert "🎁" in result['output']
         assert result['has_surprise'] is True
 
     def test_preserves_tags(self):
-        ratings = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        ratings = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
         result = run_with_ratings("{p0:45}{P:Code} fix bug", ratings)
         assert "{p0:45}{P:Code}" in result['output']
 
     def test_result_includes_ratings_dict(self):
-        ratings = [1.0, 0.6, 0.3, 0.0, 0.6, 0.3, 0.0, 0.6, 0.3, 0.0, 1.0]
+        ratings = [1.0, 0.6, 0.3, 0.0, 0.6, 0.3, 0.0, 0.6, 0.3, 0.0, 1.0, 0.3]
         result = run_with_ratings("task", ratings)
         assert 'ratings' in result
         assert result['ratings']['L'] == 1.0
         assert result['ratings']['Conf'] == 0.6
         assert result['ratings']['Pl'] == 1.0
+        assert result['ratings']['Rec'] == 0.3
 
     def test_result_includes_symbols_dict(self):
-        ratings = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0]
+        ratings = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0]
         result = run_with_ratings("task", ratings)
         assert 'symbols' in result
         assert result['symbols']['impact'] == "⭐️⭐️⭐️"
         assert result['symbols']['urgency'] == "🚨"
         assert result['symbols']['planned'] == "🗓️"
+        assert result['symbols']['recurrent'] == "🔁"
 
     def test_estimated_time_returned(self):
-        ratings = [0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.3, 0.6, 0.0, 0.6, 0.0]
+        ratings = [0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.3, 0.6, 0.0, 0.6, 0.0, 0.0]
         # 90 * 1.0 * 1.0 = 90
         estimated = estimate_time_minutes(0.6, 0.0, 0.0)
         result = run_with_ratings("task", ratings, estimated_mins=estimated)

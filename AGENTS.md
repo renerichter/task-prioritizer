@@ -97,7 +97,7 @@ interface TaskLogEntry {
     L: number; Conf: number; G: number;
     P: number; D: number;
     C: number; T: number; R: number; F: number;
-    S: number; Pl: number;
+    S: number; Pl: number; Rec: number;
   };
   scores: {                        // Calculated weighted scores (0.0-1.0)
     impact: number;
@@ -110,6 +110,7 @@ interface TaskLogEntry {
     execution: string;
     surprise: string;
     planned: string;
+    recurrent: string;
   };
   output: string;                  // Final formatted CLI output string
   estimated_time_minutes: number | null; // Auto-calculated if no tag

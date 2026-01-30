@@ -97,12 +97,13 @@ class Config:
     THRESHOLD_EXECUTION_HIGH: float = 0.5
     THRESHOLD_SURPRISE: float = 0.5
     THRESHOLD_PLANNED: float = 0.5
+    THRESHOLD_RECURRENT: float = 0.5
     STOP_RULE_FACTOR: float = 1.5
     SYMBOLS: Dict[str, str] = {}
     ARCHETYPES: Dict[str, str] = {}
     # Demo mode configuration
     DEMO_TASK: str = "Demo task for automated testing"
-    DEMO_RATINGS: str = "2,2,2,1,1,1,1,1,2,1,2"  # L,Conf,G,P,D,C,T,R,F,S,Pl
+    DEMO_RATINGS: str = "2,2,2,1,1,1,1,1,2,1,2,0"  # L,Conf,G,P,D,C,T,R,F,S,Pl,Rec
 
     @classmethod
     def reload(cls) -> None:
@@ -142,6 +143,7 @@ class Config:
         cls.THRESHOLD_EXECUTION_HIGH = _get_float('THRESHOLD_EXECUTION_HIGH', 0.5)
         cls.THRESHOLD_SURPRISE = _get_float('THRESHOLD_SURPRISE', 0.5)
         cls.THRESHOLD_PLANNED = _get_float('THRESHOLD_PLANNED', 0.5)
+        cls.THRESHOLD_RECURRENT = _get_float('THRESHOLD_RECURRENT', 0.5)
         cls.STOP_RULE_FACTOR = _get_float('STOP_RULE_FACTOR', 1.5)
         cls.SYMBOLS = {
             'urgency_high': '🚨',
@@ -150,6 +152,7 @@ class Config:
             'execution_low': '🍭',
             'planned_yes': '🗓️',
             'planned_no': '🎲',
+            'recurrent': '🔁',
             'surprise': '🎁',
             'star': '⭐️',
         }
@@ -161,7 +164,7 @@ class Config:
         }
         # Demo mode configuration (for automated testing by agents)
         cls.DEMO_TASK = os.environ.get('DEMO_TASK', "Demo task for automated testing")
-        cls.DEMO_RATINGS = os.environ.get('DEMO_RATINGS', "2,2,2,1,1,1,1,1,2,1,2")
+        cls.DEMO_RATINGS = os.environ.get('DEMO_RATINGS', "2,2,2,1,1,1,1,1,2,1,2,0")
 
     @classmethod
     def validate(cls) -> list:

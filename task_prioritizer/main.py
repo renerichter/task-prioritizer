@@ -70,51 +70,52 @@ Phase 2: Refine estimates. Remove 🎁 as clarity emerges.
 Stop-Rule: If actual time exceeds 1.5× your estimate, pause.
            Reflect on why—then adjust your next estimate.
 
-Ratings order: L,Conf,G,P,D,C,T,R,F,S,Pl
-  L=Leverage, Conf=Confidence, G=Goals, P=Priority, D=Deadline,
-  C=Complex, T=Time, R=Risk, F=Fun, S=Surprise, Pl=Planned
+    Ratings order: L,Conf,G,P,D,C,T,R,F,S,Pl,Rec
+      L=Leverage, Conf=Confidence, G=Goals, P=Priority, D=Deadline,
+      C=Complex, T=Time, R=Risk, F=Fun, S=Surprise, Pl=Planned,
+      Rec=Recurrent
 
-This tool trusts you. You're doing fine.
-"""
+    This tool trusts you. You're doing fine.
+    """
 
 SURPRISE_REMINDER = """
-┌─────────────────────────────────────────────────────────────┐
-│  🎁 appears when clarity is low.                            │
-│     In phase 1, this is natural.                            │
-│     As you learn, 🎁 fades.                                  │
-│     Trust the process.                                       │
-└─────────────────────────────────────────────────────────────┘
-"""
+    ┌─────────────────────────────────────────────────────────────┐
+    │  🎁 appears when clarity is low.                            │
+    │     In phase 1, this is natural.                            │
+    │     As you learn, 🎁 fades.                                  │
+    │     Trust the process.                                       │
+    └─────────────────────────────────────────────────────────────┘
+    """
 
-VERSION = "0.2.11"
+VERSION = "0.2.12"
 AUTHOR = "Task Prioritizer Contributors"
 
 STARTUP_BANNER = """
-╭─────────────────────────────────────────────────────────────╮
-│                                                             │
-│   Task Prioritizer 🌱  v{version}                            │
-│   A calm tool for mindful productivity                      │
-│                                                             │
-│   Choose what to work on │ Know when to stop                │
-│                                                             │
-╰─────────────────────────────────────────────────────────────╯
+    ╭─────────────────────────────────────────────────────────────╮
+    │                                                             │
+    │   Task Prioritizer 🌱  v{version}                            │
+    │   A calm tool for mindful productivity                      │
+    │                                                             │
+    │   Choose what to work on │ Know when to stop                │
+    │                                                             │
+    ╰─────────────────────────────────────────────────────────────╯
 
-WHY THIS WORKS:
-───────────────
-• High Impact + Low Execution  = Quick wins (do first)
-• High Impact + High Execution = Strategic investments (schedule)
-• Low Impact + Low Execution   = Delegate or batch
-• Low Impact + High Execution  = Avoid or eliminate
+    WHY THIS WORKS:
+    ───────────────
+    • High Impact + Low Execution  = Quick wins (do first)
+    • High Impact + High Execution = Strategic investments (schedule)
+    • Low Impact + Low Execution   = Delegate or batch
+    • Low Impact + High Execution  = Avoid or eliminate
 
-SYMBOLS AT A GLANCE:
-────────────────────
-  ⭐️⭐️⭐️ = High impact       🚨 = Urgent          🥵 = Hard
-  ⭐️⭐️   = Medium impact     🐢 = Calm            🍭 = Easy
-  ⭐️     = Low impact        🎁 = Unclear (ok!)   🗓️ = Planned
-                              🎲 = Spontaneous
+    SYMBOLS AT A GLANCE:
+    ────────────────────
+      ⭐️⭐️⭐️ = High impact       🚨 = Urgent          🥵 = Hard
+      ⭐️⭐️   = Medium impact     🐢 = Calm            🍭 = Easy
+      ⭐️     = Low impact        🎁 = Unclear (ok!)   🗓️ = Planned
+                                  🎲 = Spontaneous     🔁 = Recurrent
 
-SCALE: 0=none │ 1=low │ 2=medium │ 3=high
-"""
+    SCALE: 0=none │ 1=low │ 2=medium │ 3=high
+    """
 
 WELCOME_MESSAGE = """
 ╭─────────────────────────────────────────────────────────────╮
@@ -305,7 +306,9 @@ def _strip_leading_symbols(task_str: str) -> str:
         Config.SYMBOLS['surprise'],
         Config.SYMBOLS['planned_yes'],
         Config.SYMBOLS['planned_no'],
+        Config.SYMBOLS['recurrent'],
         "--",
+        "-",
     ]
     cleaned = task_str.lstrip()
     changed = True
@@ -419,9 +422,9 @@ def prompt_grouped_batch_ratings(planned_mins: Optional[int] = None) -> List[flo
     exec_ratings = _prompt_category_ratings("C,T,R,F", 4, c.MAGENTA, time_index=1, planned_mins=planned_mins)
     ratings.extend(exec_ratings)
 
-    print(f"\n{c.GREEN}Clarity{c.RESET} {c.GRAY}(S=Surprise, Pl=Planned){c.RESET}")
-    print(f"{c.DIM}  S: Do I know what 'done' looks like? │ Pl: Did I decide to do this?{c.RESET}")
-    clarity_ratings = _prompt_category_ratings("S,Pl", 2, c.GREEN)
+    print(f"\n{c.GREEN}Clarity{c.RESET} {c.GRAY}(S=Surprise, Pl=Planned, Rec=Recurrent){c.RESET}")
+    print(f"{c.DIM}  S: Do I know what 'done' looks like? │ Pl: Did I decide to do this? │ Rec: Is this repeating?{c.RESET}")
+    clarity_ratings = _prompt_category_ratings("S,Pl,Rec", 3, c.GREEN)
     ratings.extend(clarity_ratings)
 
     return ratings
@@ -473,7 +476,7 @@ def prompt_batch_ratings(planned_mins: Optional[int] = None) -> List[float]:
     print(f"{c.GRAY}Urgency   - (P)riority, (D)eadline{c.RESET}")
     print(f"{c.GRAY}Execution - (C)omplex, (T)ime, (R)isk, (F)un{c.RESET}")
     print(f"{c.GRAY}Clarity   - (S)urprise, (Pl)anned{c.RESET}")
-    print(f"{c.GRAY}Input as single list in order L,Conf,G,P,D,C,T,R,F,S,Pl{c.RESET}")
+    print(f"{c.GRAY}Input as single list in order L,Conf,G,P,D,C,T,R,F,S,Pl,Rec{c.RESET}")
     if planned_mins is not None:
         auto_val = get_time_score(planned_mins)
         inv_map = {v: k for k, v in Config.RATING_MAP.items()}
@@ -486,7 +489,7 @@ def prompt_batch_ratings(planned_mins: Optional[int] = None) -> List[float]:
             ratings = parse_ratings(val, planned_mins)
             if ratings is not None:
                 return ratings
-            print(f"  {c.GRAY}→ Use 11 values (0-3), comma-separated. Use _ for time with {{pH:MM}}.{c.RESET}")
+            print(f"  {c.GRAY}→ Use 11 or 12 values (0-3), comma-separated. Use _ for time with {{pH:MM}}.{c.RESET}")
         except KeyboardInterrupt:
             print(f"\n  {c.GRAY}Cancelled. Take care.{c.RESET}")
             sys.exit(0)
@@ -496,7 +499,7 @@ def prompt_batch_ratings(planned_mins: Optional[int] = None) -> List[float]:
 
 def parse_ratings(ratings_str: str, planned_mins: Optional[int] = None) -> Optional[List[float]]:
     parts = ratings_str.replace(" ", "").split(",")
-    if len(parts) != 11:
+    if len(parts) not in (11, 12):
         return None
     try:
         ratings = []
@@ -507,6 +510,8 @@ def parse_ratings(ratings_str: str, planned_mins: Optional[int] = None) -> Optio
                 ratings.append(Config.RATING_MAP[p])
             else:
                 return None
+        if len(ratings) == 11:
+            ratings.append(0.0)
         return ratings
     except (ValueError, KeyError):
         return None
@@ -567,11 +572,18 @@ def get_planned_symbol(rating: float) -> str:
     return Config.SYMBOLS['planned_no']
 
 
-def format_output(impact_sym: str, surprise_sym: str, planned_sym: str,
+def get_recurrent_symbol(rating: float) -> str:
+    if rating >= Config.THRESHOLD_RECURRENT:
+        return Config.SYMBOLS['recurrent']
+    return ""
+
+
+def format_output(impact_sym: str, surprise_sym: str, planned_sym: str, recurrent_sym: str,
                   tags: str, text: str) -> str:
-    prefix_part_1 = f"{impact_sym}{surprise_sym}"
-    separator = "--" if (impact_sym or surprise_sym) else ""
-    final_prefix = f"{prefix_part_1}{separator}{planned_sym}"
+    # Format: Impact - Surprise/Recurrent - Planned
+    # Example: ⭐️⭐️⭐️-🎁🔁-🗓️
+    # Example: --🗓️
+    final_prefix = f"{impact_sym}-{surprise_sym}{recurrent_sym}-{planned_sym}"
 
     if tags:
         return f"{final_prefix}{tags} {text}"
@@ -615,7 +627,7 @@ def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Opti
 
     r_leverage, r_confidence, r_goals, r_priority, r_deadline = ratings[0:5]
     r_complex, r_time, r_risk, r_fun = ratings[5:9]
-    r_surprise, r_planned = ratings[9:11]
+    r_surprise, r_planned, r_recurrent = ratings[9:12]
 
     s_impact = compute_impact(r_leverage, r_confidence, r_goals)
     s_urgency = compute_urgency(r_priority, r_deadline)
@@ -626,6 +638,7 @@ def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Opti
     execution_sym = get_execution_symbol(s_execution)
     surprise_sym = get_surprise_symbol(r_surprise)
     planned_sym = get_planned_symbol(r_planned)
+    recurrent_sym = get_recurrent_symbol(r_recurrent)
 
     analysis = get_analysis_text(s_impact, s_execution, s_urgency, r_surprise)
 
@@ -636,7 +649,7 @@ def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Opti
         time_tag = f"{{p{h}:{m:02d}}}"
         tags = f"{time_tag}{tags}"
 
-    final_string = format_output(impact_sym, surprise_sym, planned_sym, tags, text)
+    final_string = format_output(impact_sym, surprise_sym, planned_sym, recurrent_sym, tags, text)
 
     return {
         'output': final_string,
@@ -660,6 +673,7 @@ def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Opti
             'F': r_fun,
             'S': r_surprise,
             'Pl': r_planned,
+            'Rec': r_recurrent,
         },
         'symbols': {
             'impact': impact_sym,
@@ -667,6 +681,7 @@ def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Opti
             'execution': execution_sym,
             'surprise': surprise_sym,
             'planned': planned_sym,
+            'recurrent': recurrent_sym,
         },
         'estimated_time_minutes': estimated_mins,
         'planned_time_minutes': planned_mins,
@@ -713,6 +728,7 @@ def run_interactive(task_input: str) -> dict:
     print(f"\n{c.GREEN}── Clarity ──{c.RESET}")
     r_surprise = get_user_rating(f"{c.GREEN}Surprise (S){c.RESET}")
     r_planned = get_user_rating(f"{c.GREEN}Planned  (Pl){c.RESET}")
+    r_recurrent = get_user_rating(f"{c.GREEN}Recurrent (Rec){c.RESET}")
 
     estimated_mins = None
     if planned_mins is None:
@@ -725,8 +741,9 @@ def run_interactive(task_input: str) -> dict:
     execution_sym = get_execution_symbol(s_execution)
     surprise_sym = get_surprise_symbol(r_surprise)
     planned_sym = get_planned_symbol(r_planned)
+    recurrent_sym = get_recurrent_symbol(r_recurrent)
 
-    final_string = format_output(impact_sym, surprise_sym, planned_sym, tags, text)
+    final_string = format_output(impact_sym, surprise_sym, planned_sym, recurrent_sym, tags, text)
 
     return {
         'output': final_string,
@@ -750,6 +767,7 @@ def run_interactive(task_input: str) -> dict:
             'F': r_fun,
             'S': r_surprise,
             'Pl': r_planned,
+            'Rec': r_recurrent,
         },
         'symbols': {
             'impact': impact_sym,
@@ -757,6 +775,7 @@ def run_interactive(task_input: str) -> dict:
             'execution': execution_sym,
             'surprise': surprise_sym,
             'planned': planned_sym,
+            'recurrent': recurrent_sym,
         },
         'estimated_time_minutes': estimated_mins,
         'planned_time_minutes': planned_mins,
@@ -807,6 +826,7 @@ def colorize_output(output: str) -> str:
     result = result.replace("🎁", f"{c.MAGENTA}🎁{c.RESET}")
     result = result.replace("🗓️", f"{c.CYAN}🗓️{c.RESET}")
     result = result.replace("🎲", f"{c.GRAY}🎲{c.RESET}")
+    result = result.replace("🔁", f"{c.CYAN}🔁{c.RESET}")
     return result
 
 
@@ -1142,7 +1162,7 @@ def run_demo() -> None:
     
     if ratings is None:
         print(f"\n{c.RED}Error: Invalid DEMO_RATINGS in configuration.{c.RESET}")
-        print(f"  Expected: 11 comma-separated values (0-3)")
+        print(f"  Expected: 11 or 12 comma-separated values (0-3)")
         print(f"  Got:      {Config.DEMO_RATINGS}")
         sys.exit(1)
     
@@ -1156,10 +1176,14 @@ def run_demo() -> None:
     
     # Split ratings into category groups for simulation
     ratings_str = Config.DEMO_RATINGS.split(',')
+    # Ensure we have 12 values for the demo (append 0 if legacy 11 used)
+    if len(ratings_str) == 11:
+        ratings_str.append('0')
+        
     impact_input = f"{ratings_str[0]},{ratings_str[1]},{ratings_str[2]}"
     urgency_input = f"{ratings_str[3]},{ratings_str[4]}"
     exec_input = f"{ratings_str[5]},{ratings_str[6]},{ratings_str[7]},{ratings_str[8]}"
-    clarity_input = f"{ratings_str[9]},{ratings_str[10]}"
+    clarity_input = f"{ratings_str[9]},{ratings_str[10]},{ratings_str[11]}"
     
     # ═══════════════════════════════════════════════════════════════
     # STEP 1: App Startup - Show Banner
@@ -1218,9 +1242,9 @@ def run_demo() -> None:
     print(f"{c.DIM}  C: Deep focus needed? │ T: How long? │ R: Unknowns that could derail? │ F: Looking forward to it?{c.RESET}")
     simulate_input(f"{c.MAGENTA}C,T,R,F: {c.RESET}", exec_input)
     
-    print(f"\n{c.GREEN}Clarity{c.RESET} {c.GRAY}(S=Surprise, Pl=Planned){c.RESET}")
-    print(f"{c.DIM}  S: Do I know what 'done' looks like? │ Pl: Did I decide to do this?{c.RESET}")
-    simulate_input(f"{c.GREEN}S,Pl: {c.RESET}", clarity_input)
+    print(f"\n{c.GREEN}Clarity{c.RESET} {c.GRAY}(S=Surprise, Pl=Planned, Rec=Recurrent){c.RESET}")
+    print(f"{c.DIM}  S: Do I know what 'done' looks like? │ Pl: Did I decide to do this? │ Rec: Is this repeating?{c.RESET}")
+    simulate_input(f"{c.GREEN}S,Pl,Rec: {c.RESET}", clarity_input)
     
     # Process and show result
     result_batch = run_with_ratings(task_input, ratings, estimated_mins)
@@ -1282,6 +1306,7 @@ def run_demo() -> None:
     print(f"\n{c.GREEN}── Clarity ──{c.RESET}")
     simulate_input(f"{c.GREEN}Surprise (S): {c.RESET}", ratings_str[9])
     simulate_input(f"{c.GREEN}Planned  (Pl): {c.RESET}", ratings_str[10])
+    simulate_input(f"{c.GREEN}Recurrent (Rec): {c.RESET}", ratings_str[11])
     
     # Process and show result
     result_detail = run_with_ratings(task_input, ratings, estimated_mins)

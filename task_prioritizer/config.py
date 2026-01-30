@@ -10,6 +10,10 @@ except ImportError:
 _loaded_profile: Optional[str] = None
 
 
+def get_loaded_profile() -> Optional[str]:
+    return _loaded_profile
+
+
 def _get_project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -95,6 +99,10 @@ class Config:
     THRESHOLD_PLANNED: float = 0.5
     STOP_RULE_FACTOR: float = 1.5
     SYMBOLS: Dict[str, str] = {}
+    ARCHETYPES: Dict[str, str] = {}
+    # Demo mode configuration
+    DEMO_TASK: str = "Demo task for automated testing"
+    DEMO_RATINGS: str = "2,2,2,1,1,1,1,1,2,1,2"  # L,Conf,G,P,D,C,T,R,F,S,Pl
 
     @classmethod
     def reload(cls) -> None:
@@ -145,6 +153,15 @@ class Config:
             'surprise': '🎁',
             'star': '⭐️',
         }
+        cls.ARCHETYPES = {
+            'quick_win': os.environ.get('ARCHETYPE_QUICK_WIN', "High leverage for low friction—a pure Quick Win."),
+            'big_bet': os.environ.get('ARCHETYPE_BIG_BET', "High value, but demanding. Schedule deep work for this."),
+            'filler': os.environ.get('ARCHETYPE_FILLER', "Easy, but low leverage. Good for low-energy blocks."),
+            'slog': os.environ.get('ARCHETYPE_SLOG', "Hard work for little return. Can you eliminate or automate?"),
+        }
+        # Demo mode configuration (for automated testing by agents)
+        cls.DEMO_TASK = os.environ.get('DEMO_TASK', "Demo task for automated testing")
+        cls.DEMO_RATINGS = os.environ.get('DEMO_RATINGS', "2,2,2,1,1,1,1,1,2,1,2")
 
     @classmethod
     def validate(cls) -> list:

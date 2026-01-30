@@ -15,6 +15,9 @@ from task_prioritizer.main import (
     run_with_ratings,
     colorize_output,
     prompt_batch_ratings,
+    prompt_grouped_batch_ratings,
+    estimate_time_minutes,
+    get_analysis_text,
     Colors,
 )
 from task_prioritizer.config import Config
@@ -104,6 +107,47 @@ class TestTimeScore:
 
     def test_very_long_task(self):
         assert get_time_score(480) == Config.RATING_MAP['3']
+
+
+class TestTimeEstimation:
+    """
+    Tests for time estimation based on complexity, risk, and surprise.
+    """
+
+    def test_minimal_complexity(self):
+        estimated = estimate_time_minutes(0.0, 0.0, 0.0)
+        assert estimated == 15
+
+    def test_low_complexity(self):
+        estimated = estimate_time_minutes(0.3, 0.0, 0.0)
+        assert estimated == 45
+
+    def test_medium_complexity(self):
+        estimated = estimate_time_minutes(0.6, 0.0, 0.0)
+        assert estimated == 90
+
+    def test_high_complexity(self):
+        estimated = estimate_time_minutes(1.0, 0.0, 0.0)
+        assert estimated == 180
+
+    def test_risk_factor_increases_time(self):
+        base = estimate_time_minutes(0.6, 0.0, 0.0)
+        with_risk = estimate_time_minutes(0.6, 1.0, 0.0)
+        assert with_risk > base
+        # 90 * 1.3 = 117 -> round up to 120
+        assert with_risk == 120
+
+    def test_surprise_factor_increases_time(self):
+        base = estimate_time_minutes(0.6, 0.0, 0.0)
+        with_surprise = estimate_time_minutes(0.6, 0.0, 1.0)
+        assert with_surprise > base
+        # 90 * 1.2 = 108 -> round up to 110
+        assert with_surprise == 110
+
+    def test_combined_factors(self):
+        estimated = estimate_time_minutes(0.6, 1.0, 1.0)
+        # 90 * 1.3 * 1.2 = 140.4 -> round up to 145
+        assert estimated == 145
 
 
 class TestComputeImpact:
@@ -542,7 +586,7 @@ class TestParseRatings:
 
 class TestBatchPrompt:
     """
-    Tests for batch mode prompt input.
+    Tests for batch mode prompt input (legacy single-line).
     Ensures a single-line rating list is parsed correctly.
     """
 
@@ -560,6 +604,47 @@ class TestBatchPrompt:
         assert len(ratings) == 11
         out = capsys.readouterr().out
         assert "Use 11 values" in out
+
+
+class TestGroupedBatchPrompt:
+    """
+    Tests for grouped batch mode input.
+    Ensures category-by-category input works correctly.
+    """
+
+    def test_prompt_grouped_batch_ratings_valid(self, monkeypatch):
+        inputs = iter([
+            "3,2,1",      # Impact: L,Conf,G
+            "2,1",        # Urgency: P,D
+            "1,0,2,1",    # Execution: C,T,R,F
+            "0,3",        # Clarity: S,Pl
+        ])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        ratings = prompt_grouped_batch_ratings(planned_mins=None)
+        assert len(ratings) == 11
+        assert ratings[0] == 1.0   # L=3
+        assert ratings[1] == 0.6   # Conf=2
+        assert ratings[2] == 0.3   # G=1
+        assert ratings[3] == 0.6   # P=2
+        assert ratings[4] == 0.3   # D=1
+        assert ratings[5] == 0.3   # C=1
+        assert ratings[6] == 0.0   # T=0
+        assert ratings[7] == 0.6   # R=2
+        assert ratings[8] == 0.3   # F=1
+        assert ratings[9] == 0.0   # S=0
+        assert ratings[10] == 1.0  # Pl=3
+
+    def test_prompt_grouped_batch_with_auto_time(self, monkeypatch):
+        inputs = iter([
+            "3,2,1",
+            "2,1",
+            "1,_,2,1",    # T=_ auto-filled
+            "0,3",
+        ])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        ratings = prompt_grouped_batch_ratings(planned_mins=45)
+        assert len(ratings) == 11
+        assert ratings[6] == Config.RATING_MAP['1']  # 45 mins → score 1
 
 
 class TestRunWithRatings:
@@ -590,6 +675,31 @@ class TestRunWithRatings:
         ratings = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
         result = run_with_ratings("{p0:45}{P:Code} fix bug", ratings)
         assert "{p0:45}{P:Code}" in result['output']
+
+    def test_result_includes_ratings_dict(self):
+        ratings = [1.0, 0.6, 0.3, 0.0, 0.6, 0.3, 0.0, 0.6, 0.3, 0.0, 1.0]
+        result = run_with_ratings("task", ratings)
+        assert 'ratings' in result
+        assert result['ratings']['L'] == 1.0
+        assert result['ratings']['Conf'] == 0.6
+        assert result['ratings']['Pl'] == 1.0
+
+    def test_result_includes_symbols_dict(self):
+        ratings = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0]
+        result = run_with_ratings("task", ratings)
+        assert 'symbols' in result
+        assert result['symbols']['impact'] == "⭐️⭐️⭐️"
+        assert result['symbols']['urgency'] == "🚨"
+        assert result['symbols']['planned'] == "🗓️"
+
+    def test_estimated_time_returned(self):
+        ratings = [0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.3, 0.6, 0.0, 0.6, 0.0]
+        # 90 * 1.0 * 1.0 = 90
+        estimated = estimate_time_minutes(0.6, 0.0, 0.0)
+        result = run_with_ratings("task", ratings, estimated_mins=estimated)
+        assert result['estimated_time_minutes'] == estimated
+        # Should now prepend {p1:30} tag (90 mins)
+        assert "{p1:30}" in result['output']
 
 
 class TestColorize:
@@ -629,10 +739,12 @@ class TestColorsDisable:
 
     def test_colors_can_be_disabled(self):
         original_gold = Colors.GOLD
+        original_red = Colors.RED
+        original_reset = Colors.RESET
         Colors.disable()
         assert Colors.GOLD == ""
         assert Colors.RED == ""
         assert Colors.RESET == ""
         Colors.GOLD = original_gold
-        Colors.RED = "\033[38;5;203m"
-        Colors.RESET = "\033[0m"
+        Colors.RED = original_red
+        Colors.RESET = original_reset

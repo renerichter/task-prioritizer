@@ -1,0 +1,48 @@
+# Task-Prioritizer abbreviations vocabulary.
+#
+# Hand-curated source of truth derived once (by a human) from the user's
+# personal Templates FAQ. The runtime NEVER reads the FAQ live; this file
+# is the only authority. To update, edit it by hand and run the test
+# suite.
+#
+# Schema version is bumped on breaking changes.
+
+version = 1
+
+# ---------------------------------------------------------------------------
+# Prefixes: namespace letters used inside curly-brace tags.
+#   {P:Web}    -> project "Web"
+#   {M:Rnd}    -> meeting "Rnd"
+#   {p1:30}    -> planned time (handled by parser, listed for completeness)
+# ---------------------------------------------------------------------------
+[prefixes]
+P = "Project"
+M = "Meeting"
+p = "Planned time (pH:MM)"
+
+# ---------------------------------------------------------------------------
+# General (single-token) tags used without a prefix: {Lrn}, {Man}.
+# ---------------------------------------------------------------------------
+[general]
+Lrn = "Learn"
+Man = "Management"
+
+# ---------------------------------------------------------------------------
+# Project codes used as {P:CODE}.
+# ---------------------------------------------------------------------------
+[projects]
+CAi = "CursorAI Tutorial"
+EnC = "EncryptCredentials"
+Gpt = "ChatGptApps"
+Ibe = "IBE"
+MyP = "myProjects"
+Web = "WebApp"
+
+# ---------------------------------------------------------------------------
+# Meeting codes used as {M:CODE}.
+# ---------------------------------------------------------------------------
+[meetings]
+Gen = "General Meeting"
+JF  = "Jour Fixe"
+Pp  = "Meeting Preparation / Post-processing"
+Rnd = "Random Meeting"

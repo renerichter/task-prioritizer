@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from .config import Config, get_config, load_profile, is_first_run, mark_welcomed
+from .config import Config, get_config, is_first_run, load_profile, mark_welcomed
 
 _MAIN_EXPORTS = [
     "parse_task",

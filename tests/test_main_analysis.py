@@ -1,5 +1,5 @@
-from task_prioritizer.main import get_analysis_text
 from task_prioritizer.config import Config
+from task_prioritizer.main import get_analysis_text
 
 
 class TestAnalysisText:

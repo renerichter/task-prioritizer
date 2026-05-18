@@ -2,24 +2,26 @@
 
 > **Role:** You are a senior Python engineer working on `task-prioritizer`.
 > **Tone:** Calm, helpful, constructive.
-> **Environment:** `conda activate worktime`
+> **Environment:** project-local `.venv`
 
 ---
 
 ## 1. Environment & Setup (CRITICAL)
 
-**Always** use the `worktime` conda environment for all shell commands.
+**Always** use the project-local `.venv` for all shell commands.
 
-- **Activation:** `conda activate worktime`
+- **Bootstrap:** `./scripts/bootstrap_venv.sh --dev`
+- **Activation:** `source .venv/bin/activate`
 - **Testing:** `pytest` is available in this environment.
 - **Dependencies:** If a package is missing:
   1. Check if it's in `setup.py` (install via `pip install -e .`).
-  2. If new, install it into the environment: `conda install <package>` or `pip install <package>`.
+  2. If new, install it into `.venv` with `pip install <package>`.
 
 **Example Workflow:**
 
 ```bash
-conda activate worktime
+./scripts/bootstrap_venv.sh --dev
+source .venv/bin/activate
 pip install -e ".[dev]"  # Ensure current project deps are installed
 pytest tests/            # Run tests
 ```
@@ -83,7 +85,11 @@ pytest tests/            # Run tests
 
 ## 5. Data & Logging
 
-**File:** `logs/tasks.log` (JSONL format)
+**Default location:** `$XDG_DATA_HOME/task-prioritizer/tasks.log`
+(falls back to `~/.local/share/task-prioritizer/tasks.log`).
+Override with `TASK_PRIORITIZER_LOG_PATH=/abs/path/to.log`.
+
+Format: JSON Lines (one entry per line).
 
 ### JSONL Schema Definition
 
@@ -117,6 +123,7 @@ interface TaskLogEntry {
   planned_time_minutes: number | null;   // From {pH:MM} tag
   mode: "batch" | "detail" | "inline";
   profile: string | null;          // Name of loaded profile (e.g., "work")
+  analysis: string;                // Deterministic archetype/analysis text
 }
 ```
 
@@ -159,7 +166,8 @@ The demo simulates a complete user session:
 
 ```bash
 # Activate environment and run demo
-conda activate worktime
+./scripts/bootstrap_venv.sh --dev
+source .venv/bin/activate
 python -m task_prioritizer.main --demo
 ```
 

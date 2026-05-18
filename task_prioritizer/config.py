@@ -1,16 +1,15 @@
 import os
 from pathlib import Path
-from typing import Dict, Optional
 
 try:
     from dotenv import load_dotenv
 except ImportError:
     load_dotenv = None
 
-_loaded_profile: Optional[str] = None
+_loaded_profile: str | None = None
 
 
-def get_loaded_profile() -> Optional[str]:
+def get_loaded_profile() -> str | None:
     return _loaded_profile
 
 
@@ -22,7 +21,7 @@ def _get_home_config_dir() -> Path:
     return Path.home() / ".config" / "task-prioritizer"
 
 
-def _find_env_file(profile: Optional[str] = None) -> Path:
+def _find_env_file(profile: str | None = None) -> Path:
     project_root = _get_project_root()
     home_config = _get_home_config_dir()
 
@@ -56,7 +55,7 @@ def mark_welcomed() -> None:
     marker.touch()
 
 
-def load_profile(profile: Optional[str] = None) -> None:
+def load_profile(profile: str | None = None) -> None:
     global _loaded_profile
     env_path = _find_env_file(profile)
     if load_dotenv and env_path.exists():
@@ -86,10 +85,10 @@ def _get_int(key: str, default: int) -> int:
 
 
 class Config:
-    RATING_MAP: Dict[str, float] = {}
-    DISPLAY_MAP: Dict[str, str] = {}
-    WEIGHTS: Dict[str, Dict[str, float]] = {}
-    TIME_THRESHOLDS: Dict[str, int] = {}
+    RATING_MAP: dict[str, float] = {}
+    DISPLAY_MAP: dict[str, str] = {}
+    WEIGHTS: dict[str, dict[str, float]] = {}
+    TIME_THRESHOLDS: dict[str, int] = {}
     THRESHOLD_IMPACT_3STAR: float = 0.75
     THRESHOLD_IMPACT_2STAR: float = 0.50
     THRESHOLD_IMPACT_1STAR: float = 0.25
@@ -99,8 +98,8 @@ class Config:
     THRESHOLD_PLANNED: float = 0.5
     THRESHOLD_RECURRENT: float = 0.5
     STOP_RULE_FACTOR: float = 1.5
-    SYMBOLS: Dict[str, str] = {}
-    ARCHETYPES: Dict[str, str] = {}
+    SYMBOLS: dict[str, str] = {}
+    ARCHETYPES: dict[str, str] = {}
     # Demo mode configuration
     DEMO_TASK: str = "Demo task for automated testing"
     DEMO_RATINGS: str = "2,2,2,1,1,1,1,1,2,1,2,0"  # L,Conf,G,P,D,C,T,R,F,S,Pl,Rec

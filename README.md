@@ -4,6 +4,22 @@ A calm CLI tool for choosing what to work on and knowing when to stop.
 
 ---
 
+## What's New in 2.2
+
+- **Textual TUI** — run `tp-tui` for a single-screen keyboard interface.
+- **`/discuss` command** — opt-in local LLM sparring partner via Ollama (`gemma4:e4b`).
+- **`/abbr` command** — surface your task-vocabulary cheat-sheet (`docs/abbreviations.toml`).
+- **SQLite history** — every scored task is dual-written to `tasks.db` for trend queries; JSONL stays canonical.
+- **Estimate suggester** — `suggest_estimate()` matches new tasks against history via Jaccard tokens and returns a median + proof.
+- **Decision-matrix recommendations** — each result now includes a quadrant ("calm_simple", "urgent_complex", …) and a calm sentence.
+- **Stop-rule scaffold** — `check_stop_rule()` returns a `StopRuleResult` when actual > 1.5× estimate; ready for TUI surfacing.
+- **Modular refactor** — `core/`, `cli/`, `tui/`, `persistence/`, `ingest/`, `llm/`. See [docs/architecture.md](docs/architecture.md).
+- **Python 3.12+ / PEP-621 packaging.**
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+---
+
 ## What This Tool Does
 
 **Two things, clearly separated:**
@@ -20,7 +36,8 @@ A calm CLI tool for choosing what to work on and knowing when to stop.
 ### 1. Install
 
 ```bash
-pip install -e .
+./scripts/bootstrap_venv.sh --dev
+source .venv/bin/activate
 ```
 
 ### 2. Add the `tp` function to your shell
@@ -170,6 +187,8 @@ When running in the interactive loop (no `-r` flag), you can use these commands:
 | `/help` | Show quick reference (non-destructive) |
 | `/mode batch` | Switch to batch mode |
 | `/mode detail` | Switch to detail mode (restarts input) |
+| `/abbr` | Show abbreviation vocabulary (from `docs/abbreviations.toml`) |
+| `/discuss` | Ask the local LLM to challenge the last result (opt-in, see [docs/llm.md](docs/llm.md)) |
 | `/quit` | Exit the program |
 | `Ctrl+C` / `Ctrl+D` | Exit the program |
 
@@ -450,6 +469,7 @@ This confirms all components are working correctly and both modes produce consis
 
 ```bash
 # Install with dev dependencies
+source .venv/bin/activate
 pip install -e ".[dev]"
 
 # Run tests

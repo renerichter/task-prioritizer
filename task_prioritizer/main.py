@@ -1,378 +1,47 @@
 #!/usr/bin/env python3
-import sys
-import re
-import os
-import json
 import argparse
-import subprocess
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
+import sys
 
 try:
     import readline
 except ImportError:
     readline = None
 
-from .config import Config, load_profile, is_first_run, mark_welcomed, _loaded_profile
+from .cli.banners import (
+    DETAIL_EXAMPLES,
+    DETAIL_EXPLANATION,
+    HELP_EPILOG,
+    LOOP_HELP,
+    STARTUP_BANNER,
+    SURPRISE_REMINDER,
+    VERSION,
+    WELCOME_MESSAGE,
+)
+from .cli.colors import Colors, colorize_output, copy_to_clipboard, supports_color
+from .config import Config, is_first_run, load_profile, mark_welcomed
+from .core.analysis import get_analysis_text
+from .core.decision_matrix import classify_quadrant, quadrant_recommendation
+from .core.parsing import parse_ratings, parse_task
+from .core.scoring import (
+    compute_execution,
+    compute_impact,
+    compute_urgency,
+    estimate_time_minutes,
+    get_time_score,
+)
+from .core.symbols import (
+    format_output,
+    get_execution_symbol,
+    get_impact_symbol,
+    get_planned_symbol,
+    get_recurrent_symbol,
+    get_surprise_symbol,
+    get_urgency_symbol,
+)
+from .persistence.log import _get_log_path, log_task
 
 
-class Colors:
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-    GOLD = "\033[38;5;220m"
-    RED = "\033[38;5;203m"
-    GREEN = "\033[38;5;114m"
-    CYAN = "\033[38;5;117m"
-    MAGENTA = "\033[38;5;177m"
-    GRAY = "\033[38;5;245m"
-    WHITE = "\033[38;5;255m"
-    BLUE = "\033[38;5;111m"
-    ORANGE = "\033[38;5;208m"
-
-    @classmethod
-    def disable(cls):
-        cls.RESET = ""
-        cls.BOLD = ""
-        cls.DIM = ""
-        cls.GOLD = ""
-        cls.RED = ""
-        cls.GREEN = ""
-        cls.CYAN = ""
-        cls.MAGENTA = ""
-        cls.GRAY = ""
-        cls.WHITE = ""
-        cls.BLUE = ""
-        cls.ORANGE = ""
-
-
-def supports_color() -> bool:
-    if not hasattr(sys.stdout, "isatty"):
-        return False
-    if not sys.stdout.isatty():
-        return False
-    if "NO_COLOR" in os.environ:
-        return False
-    return True
-
-
-HELP_EPILOG = """
-╭─────────────────────────────────────────────────────────────╮
-│  "calculations" = choosing what to work on                  │
-│  "stop-rule"    = knowing when to stop, when good enough is │
-│                   good enough                               │
-╰─────────────────────────────────────────────────────────────╯
-
-Phase 1: Capture tasks roughly. Uncertainty (🎁) is expected.
-Phase 2: Refine estimates. Remove 🎁 as clarity emerges.
-
-Stop-Rule: If actual time exceeds 1.5× your estimate, pause.
-           Reflect on why—then adjust your next estimate.
-
-    Ratings order: L,Conf,G,P,D,C,T,R,F,S,Pl,Rec
-      L=Leverage, Conf=Confidence, G=Goals, P=Priority, D=Deadline,
-      C=Complex, T=Time, R=Risk, F=Fun, S=Surprise, Pl=Planned,
-      Rec=Recurrent
-
-    This tool trusts you. You're doing fine.
-    """
-
-SURPRISE_REMINDER = """
-    ┌─────────────────────────────────────────────────────────────┐
-    │  🎁 appears when clarity is low.                            │
-    │     In phase 1, this is natural.                            │
-    │     As you learn, 🎁 fades.                                  │
-    │     Trust the process.                                       │
-    └─────────────────────────────────────────────────────────────┘
-    """
-
-VERSION = "0.2.12"
-AUTHOR = "Task Prioritizer Contributors"
-
-STARTUP_BANNER = """
-    ╭─────────────────────────────────────────────────────────────╮
-    │                                                             │
-    │   Task Prioritizer 🌱  v{version}                            │
-    │   A calm tool for mindful productivity                      │
-    │                                                             │
-    │   Choose what to work on │ Know when to stop                │
-    │                                                             │
-    ╰─────────────────────────────────────────────────────────────╯
-
-    WHY THIS WORKS:
-    ───────────────
-    • High Impact + Low Execution  = Quick wins (do first)
-    • High Impact + High Execution = Strategic investments (schedule)
-    • Low Impact + Low Execution   = Delegate or batch
-    • Low Impact + High Execution  = Avoid or eliminate
-
-    SYMBOLS AT A GLANCE:
-    ────────────────────
-      ⭐️⭐️⭐️ = High impact       🚨 = Urgent          🥵 = Hard
-      ⭐️⭐️   = Medium impact     🐢 = Calm            🍭 = Easy
-      ⭐️     = Low impact        🎁 = Unclear (ok!)   🗓️ = Planned
-                                  🎲 = Spontaneous     🔁 = Recurrent
-
-    SCALE: 0=none │ 1=low │ 2=medium │ 3=high
-    """
-
-WELCOME_MESSAGE = """
-╭─────────────────────────────────────────────────────────────╮
-│                                                             │
-│   Welcome to Task Prioritizer 🌱                            │
-│                                                             │
-│   This tool helps you:                                      │
-│   • Choose what to work on (by scoring impact & effort)     │
-│   • Know when to stop (the 1.5× stop-rule)                  │
-│                                                             │
-│   How it works:                                             │
-│   1. You'll rate each factor from 0 to 3                    │
-│   2. The tool calculates priority and shows symbols         │
-│   3. Copy the result to your task list                      │
-│                                                             │
-│   Scale: 0=none, 1=low, 2=medium, 3=high                    │
-│                                                             │
-│   When 🎁 appears, that's okay—it means the task is         │
-│   still unclear. Clarity comes with time.                   │
-│                                                             │
-│   Let's try your first task...                              │
-│                                                             │
-╰─────────────────────────────────────────────────────────────╯
-"""
-
-LOOP_HELP = """
-╭─────────────────────────────────────────────────────────────╮
-│  Quick Reference                                            │
-├─────────────────────────────────────────────────────────────┤
-│  Enter a task string to prioritize it.                      │
-│                                                             │
-│  Commands (type / for menu):                                │
-│    /help, /h          Show this help                        │
-│    /mode batch, /m b  Switch to batch mode (grouped input)  │
-│    /mode detail, /m d Switch to detail mode (explanations)  │
-│    /quit, /q          Exit the program                      │
-│    Ctrl+C/D           Exit the program                      │
-│                                                             │
-│  Task format:                                               │
-│    {p0:45} task description   (45 min planned time)         │
-│    {P:Tag} task description   (custom tag preserved)        │
-│                                                             │
-│  Rating scale: 0=none, 1=low, 2=medium, 3=high              │
-│                                                             │
-│  Categories:                                                │
-│    Impact    (L,Conf,G)  - Leverage, Confidence, Goals      │
-│    Urgency   (P,D)       - Priority, Deadline               │
-│    Execution (C,T,R,F)   - Complex, Time, Risk, Fun         │
-│    Clarity   (S,Pl)      - Surprise, Planned                │
-╰─────────────────────────────────────────────────────────────╯
-"""
-
-DETAIL_EXPLANATION = """
-╭─────────────────────────────────────────────────────────────╮
-│  Understanding the Rating System                            │
-╰─────────────────────────────────────────────────────────────╯
-
-This prioritization system scores tasks across 4 categories to help
-you identify what truly matters and how much effort it requires.
-
-┌─ IMPACT ─────────────────────────────────────────────────────┐
-│  Measures the value and return on investment of the task.   │
-│                                                              │
-│  • Leverage (L): How much output per unit of input?          │
-│    0=no leverage, 3=massive multiplier effect                │
-│    Ask: "Will this make future work easier?"                 │
-│                                                              │
-│  • Confidence (Conf): How sure are you it will work?         │
-│    0=pure guess, 3=proven approach                           │
-│    Ask: "Have I done this before? Is the path clear?"        │
-│                                                              │
-│  • Goals (G): How aligned with your objectives?              │
-│    0=off-track, 3=directly advances key goal                 │
-│    Ask: "Does this move the needle on what matters?"         │
-└──────────────────────────────────────────────────────────────┘
-
-┌─ URGENCY ────────────────────────────────────────────────────┐
-│  Measures time pressure and external constraints.            │
-│                                                              │
-│  • Priority (P): How important relative to other tasks?      │
-│    0=can wait indefinitely, 3=must do before anything else   │
-│    Ask: "What happens if I don't do this today?"             │
-│                                                              │
-│  • Deadline (D): How close is the due date?                  │
-│    0=no deadline, 3=due today/overdue                        │
-│    Ask: "When does this absolutely need to be done?"         │
-└──────────────────────────────────────────────────────────────┘
-
-┌─ EXECUTION ──────────────────────────────────────────────────┐
-│  Measures effort, friction, and resistance.                  │
-│                                                              │
-│  • Complexity (C): How mentally demanding?                   │
-│    0=trivial, 3=requires deep focus and expertise            │
-│    Ask: "Will I need to think hard or can I autopilot?"      │
-│                                                              │
-│  • Time (T): How long will it take?                          │
-│    0=<30min, 1=30-90min, 2=90-150min, 3=>150min              │
-│    (Auto-filled if you provide {pH:MM} tag)                  │
-│    (If auto-estimated, result rounds up to nearest 5m)       │
-│                                                              │
-│  • Risk (R): What can go wrong?                              │
-│    0=safe, 3=high chance of blockers or failure              │
-│    Ask: "Are there unknowns that could derail this?"         │
-│                                                              │
-│  • Fun (F): How enjoyable is this task?                      │
-│    0=dread it, 3=looking forward to it                       │
-│    (Higher fun = easier execution, less procrastination)     │
-└──────────────────────────────────────────────────────────────┘
-
-┌─ CLARITY ────────────────────────────────────────────────────┐
-│  Measures how well-defined the task is.                      │
-│                                                              │
-│  • Surprise (S): How much uncertainty remains?               │
-│    0=fully understood, 3=many unknowns (🎁 appears)          │
-│    Ask: "Do I know exactly what 'done' looks like?"          │
-│                                                              │
-│  • Planned (Pl): Was this scheduled or spontaneous?          │
-│    0=just popped up, 3=on the roadmap for weeks              │
-│    Ask: "Did I decide to do this, or did it decide for me?"  │
-└──────────────────────────────────────────────────────────────┘
-
-WHY THIS WORKS:
-───────────────
-• High Impact + Low Execution = Quick wins (do first)
-• High Impact + High Execution = Strategic investments (schedule)
-• Low Impact + Low Execution = Delegate or batch
-• Low Impact + High Execution = Avoid or eliminate
-
-The symbols help you scan your task list at a glance:
-  ⭐️⭐️⭐️ = High impact, prioritize this
-  🚨 = Urgent, time-sensitive
-  🐢 = Calm, no rush
-  🥵 = Hard, high friction
-  🍭 = Easy, low friction
-  🎁 = Unclear, refine later (normal in Phase 1)
-  🗓️ = Planned work
-  🎲 = Spontaneous/reactive
-
-"""
-
-DETAIL_EXAMPLES = """
-╭─────────────────────────────────────────────────────────────╮
-│  Examples                                                   │
-╰─────────────────────────────────────────────────────────────╯
-
-┌─ EXAMPLE A: High Priority Task ──────────────────────────────┐
-│                                                              │
-│  Input: "{p1:30} prepare quarterly presentation"             │
-│                                                              │
-│  Ratings:                                                    │
-│    Impact:    L=3, Conf=2, G=3  (high leverage, aligns well) │
-│    Urgency:   P=3, D=3          (due today, top priority)    │
-│    Execution: C=2, T=_, R=1, F=1 (moderate effort)           │
-│    Clarity:   S=0, Pl=3         (well-planned, clear scope)  │
-│                                                              │
-│  Output: ⭐️⭐️⭐️--🗓️{p1:30} prepare quarterly presentation  │
-│  Category: 🚨 & 🥵 (urgent and demanding)                    │
-│                                                              │
-│  → This gets three stars (high impact), scheduled symbol,    │
-│    and shows as urgent. Do this first.                       │
-└──────────────────────────────────────────────────────────────┘
-
-┌─ EXAMPLE B: Low Priority Task ───────────────────────────────┐
-│                                                              │
-│  Input: "reorganize desktop files"                           │
-│                                                              │
-│  Ratings:                                                    │
-│    Impact:    L=0, Conf=3, G=0  (no leverage, off-goal)      │
-│    Urgency:   P=0, D=0          (no deadline, low priority)  │
-│    Execution: C=0, T=1, R=0, F=1 (easy but not fun)          │
-│    Clarity:   S=2, Pl=0         (vague scope, unplanned)     │
-│                                                              │
-│  Output: 🎁--🎲 reorganize desktop files                     │
-│  Category: 🐢 & 🍭 (calm and easy)                           │
-│  Estimated time: ~58 min (auto-calculated)                   │
-│                                                              │
-│  → No stars (low impact), surprise symbol (unclear scope),   │
-│    spontaneous. You might feel like doing this, but the      │
-│    system correctly identifies it as low-value busywork.     │
-│    Either clarify scope or skip it entirely.                 │
-└──────────────────────────────────────────────────────────────┘
-"""
-
-
-def _strip_leading_symbols(task_str: str) -> str:
-    symbols = [
-        Config.SYMBOLS['star'],
-        Config.SYMBOLS['surprise'],
-        Config.SYMBOLS['planned_yes'],
-        Config.SYMBOLS['planned_no'],
-        Config.SYMBOLS['recurrent'],
-        "--",
-        "-",
-    ]
-    cleaned = task_str.lstrip()
-    changed = True
-    while cleaned and changed:
-        changed = False
-        for token in symbols:
-            if cleaned.startswith(token):
-                cleaned = cleaned[len(token):].lstrip()
-                changed = True
-                break
-    return cleaned
-
-
-def parse_task(task_str: str) -> Tuple[str, str, Optional[int]]:
-    task_str = _strip_leading_symbols(task_str)
-    tag_pattern = re.compile(r'^(\s*\{[^}]+\})+')
-    match = tag_pattern.match(task_str)
-
-    existing_tags = ""
-    clean_text = task_str
-
-    if match:
-        existing_tags = match.group(0).strip()
-        clean_text = task_str[match.end():].strip()
-
-    time_pattern = re.compile(r'\{p(\d+):(\d{2})\}')
-    time_match = time_pattern.search(task_str)
-
-    planned_minutes = None
-    if time_match:
-        h = int(time_match.group(1))
-        m = int(time_match.group(2))
-        planned_minutes = h * 60 + m
-
-    return existing_tags, clean_text, planned_minutes
-
-
-def get_time_score(minutes: int) -> float:
-    thresholds = Config.TIME_THRESHOLDS
-    rating_map = Config.RATING_MAP
-    if minutes <= thresholds['low']:
-        return rating_map['0']
-    elif minutes <= thresholds['med']:
-        return rating_map['1']
-    elif minutes <= thresholds['high']:
-        return rating_map['2']
-    else:
-        return rating_map['3']
-
-
-import math
-
-def estimate_time_minutes(r_complex: float, r_risk: float, r_surprise: float) -> int:
-    """Estimate time based on complexity, risk, and surprise ratings. Rounds up to nearest 5 min."""
-    base_times = {0.0: 15, 0.3: 45, 0.6: 90, 1.0: 180}
-    base = base_times.get(r_complex, 45)
-    risk_factor = 1 + r_risk * 0.3
-    surprise_factor = 1 + r_surprise * 0.2
-    raw_minutes = base * risk_factor * surprise_factor
-    # Round up to next 5 minutes
-    return math.ceil(raw_minutes / 5) * 5
-
-
-def get_user_rating(prompt_label: str, auto_val: Optional[float] = None) -> float:
+def get_user_rating(prompt_label: str, auto_val: float | None = None) -> float:
     c = Colors
     if auto_val is not None:
         inv_map = {v: k for k, v in Config.RATING_MAP.items()}
@@ -393,7 +62,7 @@ def get_user_rating(prompt_label: str, auto_val: Optional[float] = None) -> floa
             sys.exit(0)
 
 
-def prompt_grouped_batch_ratings(planned_mins: Optional[int] = None) -> List[float]:
+def prompt_grouped_batch_ratings(planned_mins: int | None = None) -> list[float]:
     """Prompt for ratings grouped by category."""
     c = Colors
     dm = Config.DISPLAY_MAP
@@ -434,9 +103,9 @@ def _prompt_category_ratings(
     label: str,
     count: int,
     color: str,
-    time_index: Optional[int] = None,
-    planned_mins: Optional[int] = None
-) -> List[float]:
+    time_index: int | None = None,
+    planned_mins: int | None = None
+) -> list[float]:
     """Prompt for a category's ratings."""
     c = Colors
     while True:
@@ -467,7 +136,7 @@ def _prompt_category_ratings(
             sys.exit(0)
 
 
-def prompt_batch_ratings(planned_mins: Optional[int] = None) -> List[float]:
+def prompt_batch_ratings(planned_mins: int | None = None) -> list[float]:
     """Legacy single-line batch prompt (kept for -r flag parsing)."""
     c = Colors
     dm = Config.DISPLAY_MAP
@@ -497,132 +166,7 @@ def prompt_batch_ratings(planned_mins: Optional[int] = None) -> List[float]:
             sys.exit(0)
 
 
-def parse_ratings(ratings_str: str, planned_mins: Optional[int] = None) -> Optional[List[float]]:
-    parts = ratings_str.replace(" ", "").split(",")
-    if len(parts) not in (11, 12):
-        return None
-    try:
-        ratings = []
-        for i, p in enumerate(parts):
-            if p == "_" and i == 6 and planned_mins is not None:
-                ratings.append(get_time_score(planned_mins))
-            elif p in Config.RATING_MAP:
-                ratings.append(Config.RATING_MAP[p])
-            else:
-                return None
-        if len(ratings) == 11:
-            ratings.append(0.0)
-        return ratings
-    except (ValueError, KeyError):
-        return None
-
-
-def compute_impact(r_leverage: float, r_confidence: float, r_goals: float) -> float:
-    w = Config.WEIGHTS['impact']
-    return (r_leverage * w['leverage'] +
-            r_confidence * w['confidence'] +
-            r_goals * w['goals'])
-
-
-def compute_urgency(r_priority: float, r_deadline: float) -> float:
-    w = Config.WEIGHTS['urgency']
-    return r_priority * w['priority'] + r_deadline * w['deadline']
-
-
-def compute_execution(r_complex: float, r_time: float, r_risk: float, r_fun: float) -> float:
-    w = Config.WEIGHTS['execution']
-    return (r_complex * w['complex'] +
-            r_time * w['time'] +
-            r_risk * w['risk'] +
-            r_fun * w['fun'])
-
-
-def get_impact_symbol(score: float) -> str:
-    star = Config.SYMBOLS['star']
-    if score > Config.THRESHOLD_IMPACT_3STAR:
-        return star * 3
-    elif score > Config.THRESHOLD_IMPACT_2STAR:
-        return star * 2
-    elif score > Config.THRESHOLD_IMPACT_1STAR:
-        return star
-    return ""
-
-
-def get_urgency_symbol(score: float) -> str:
-    if score >= Config.THRESHOLD_URGENCY_HIGH:
-        return Config.SYMBOLS['urgency_high']
-    return Config.SYMBOLS['urgency_low']
-
-
-def get_execution_symbol(score: float) -> str:
-    if score >= Config.THRESHOLD_EXECUTION_HIGH:
-        return Config.SYMBOLS['execution_high']
-    return Config.SYMBOLS['execution_low']
-
-
-def get_surprise_symbol(rating: float) -> str:
-    if rating >= Config.THRESHOLD_SURPRISE:
-        return Config.SYMBOLS['surprise']
-    return ""
-
-
-def get_planned_symbol(rating: float) -> str:
-    if rating >= Config.THRESHOLD_PLANNED:
-        return Config.SYMBOLS['planned_yes']
-    return Config.SYMBOLS['planned_no']
-
-
-def get_recurrent_symbol(rating: float) -> str:
-    if rating >= Config.THRESHOLD_RECURRENT:
-        return Config.SYMBOLS['recurrent']
-    return ""
-
-
-def format_output(impact_sym: str, surprise_sym: str, planned_sym: str, recurrent_sym: str,
-                  tags: str, text: str) -> str:
-    # Format: Impact - Surprise/Recurrent - Planned
-    # Example: ⭐️⭐️⭐️-🎁🔁-🗓️
-    # Example: --🗓️
-    final_prefix = f"{impact_sym}-{surprise_sym}{recurrent_sym}-{planned_sym}"
-
-    if tags:
-        return f"{final_prefix}{tags} {text}"
-    return f"{final_prefix} {text}"
-
-
-def get_analysis_text(s_impact: float, s_execution: float, s_urgency: float, r_surprise: float) -> str:
-    """
-    Generates a deterministic summary sentence based on scores.
-    Logic: [Prefix: Clarity] + [Core: Impact vs Execution] + [Suffix: Urgency]
-    """
-    # 1. Prefix: Clarity
-    prefix = ""
-    if r_surprise >= Config.THRESHOLD_SURPRISE:
-        prefix = "Scope is unclear (🎁). "
-
-    # 2. Core: Archetype (Impact vs Execution)
-    # Thresholds: Impact 0.5 (medium), Execution 0.5 (medium)
-    high_impact = s_impact > 0.5
-    high_execution = s_execution > 0.5
-
-    if high_impact and not high_execution:
-        core = Config.ARCHETYPES['quick_win']
-    elif high_impact and high_execution:
-        core = Config.ARCHETYPES['big_bet']
-    elif not high_impact and not high_execution:
-        core = Config.ARCHETYPES['filler']
-    else:  # Low impact, high execution
-        core = Config.ARCHETYPES['slog']
-
-    # 3. Suffix: Urgency
-    suffix = ""
-    if s_urgency >= Config.THRESHOLD_URGENCY_HIGH:
-        suffix = " Critical priority."
-
-    return f"{prefix}{core}{suffix}"
-
-
-def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Optional[int] = None) -> dict:
+def run_with_ratings(task_input: str, ratings: list[float], estimated_mins: int | None = None) -> dict:
     tags, text, planned_mins = parse_task(task_input)
 
     r_leverage, r_confidence, r_goals, r_priority, r_deadline = ratings[0:5]
@@ -686,6 +230,10 @@ def run_with_ratings(task_input: str, ratings: List[float], estimated_mins: Opti
         'estimated_time_minutes': estimated_mins,
         'planned_time_minutes': planned_mins,
         'analysis': analysis,
+        'quadrant': classify_quadrant(urgency_sym, execution_sym),
+        'quadrant_recommendation': quadrant_recommendation(
+            classify_quadrant(urgency_sym, execution_sym)
+        ),
     }
 
 
@@ -780,6 +328,10 @@ def run_interactive(task_input: str) -> dict:
         'estimated_time_minutes': estimated_mins,
         'planned_time_minutes': planned_mins,
         'analysis': analysis,
+        'quadrant': classify_quadrant(urgency_sym, execution_sym),
+        'quadrant_recommendation': quadrant_recommendation(
+            classify_quadrant(urgency_sym, execution_sym)
+        ),
     }
 
 
@@ -813,48 +365,6 @@ def run_batch(task_input: str) -> dict:
         estimated_mins = estimate_time_minutes(r_complex, r_risk, r_surprise)
 
     return run_with_ratings(task_input, ratings, estimated_mins)
-
-
-def colorize_output(output: str) -> str:
-    c = Colors
-    result = output
-    result = result.replace("⭐️", f"{c.GOLD}⭐️{c.RESET}")
-    result = result.replace("🚨", f"{c.RED}🚨{c.RESET}")
-    result = result.replace("🐢", f"{c.GREEN}🐢{c.RESET}")
-    result = result.replace("🥵", f"{c.RED}🥵{c.RESET}")
-    result = result.replace("🍭", f"{c.GREEN}🍭{c.RESET}")
-    result = result.replace("🎁", f"{c.MAGENTA}🎁{c.RESET}")
-    result = result.replace("🗓️", f"{c.CYAN}🗓️{c.RESET}")
-    result = result.replace("🎲", f"{c.GRAY}🎲{c.RESET}")
-    result = result.replace("🔁", f"{c.CYAN}🔁{c.RESET}")
-    return result
-
-
-def copy_to_clipboard(text: str) -> bool:
-    try:
-        if sys.platform == "darwin":
-            subprocess.run(["pbcopy"], input=text.encode(), check=True)
-            return True
-        elif sys.platform.startswith("linux"):
-            try:
-                subprocess.run(["xclip", "-selection", "clipboard"],
-                               input=text.encode(), check=True)
-                return True
-            except FileNotFoundError:
-                try:
-                    subprocess.run(["xsel", "--clipboard", "--input"],
-                                   input=text.encode(), check=True)
-                    return True
-                except FileNotFoundError:
-                    return False
-        elif sys.platform == "win32":
-            subprocess.run(["clip"], input=text.encode(), check=True, shell=True)
-            return True
-    except Exception:
-        return False
-    return False
-
-
 def print_result(result: dict, copy: bool = False, quiet: bool = False) -> None:
     c = Colors
     output = result['output']
@@ -872,6 +382,8 @@ def print_result(result: dict, copy: bool = False, quiet: bool = False) -> None:
         print(f"{c.DIM}{'─' * 42}{c.RESET}")
         if result.get('analysis'):
             print(f"{c.CYAN}{result['analysis']}{c.RESET}")
+        if result.get('quadrant_recommendation'):
+            print(f"{c.GOLD}→ {result['quadrant_recommendation']}{c.RESET}")
         print(f"{c.DIM}{'═' * 42}{c.RESET}")
 
     if copy:
@@ -888,35 +400,6 @@ def show_welcome() -> None:
     c = Colors
     print(f"{c.CYAN}{WELCOME_MESSAGE}{c.RESET}")
     mark_welcomed()
-
-
-def _get_log_path() -> Path:
-    project_root = Path(__file__).resolve().parent.parent
-    log_dir = project_root / "logs"
-    log_dir.mkdir(exist_ok=True)
-    return log_dir / "tasks.log"
-
-
-def log_task(task_input: str, result: dict, mode: str, profile: Optional[str] = None) -> None:
-    """Log task to JSONL file."""
-    log_path = _get_log_path()
-    entry = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "input": task_input,
-        "ratings": result.get('ratings', {}),
-        "scores": result.get('scores', {}),
-        "symbols": result.get('symbols', {}),
-        "output": result.get('output', ''),
-        "estimated_time_minutes": result.get('estimated_time_minutes'),
-        "planned_time_minutes": result.get('planned_time_minutes'),
-        "mode": mode,
-        "profile": profile,
-    }
-    try:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -988,7 +471,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def process_task(task_input: str, mode: str, copy: bool, quiet: bool, profile: Optional[str]) -> dict:
+def process_task(task_input: str, mode: str, copy: bool, quiet: bool, profile: str | None) -> dict:
     """Process a single task with the specified mode."""
     tags, text, planned_mins = parse_task(task_input)
 
@@ -1002,28 +485,30 @@ def process_task(task_input: str, mode: str, copy: bool, quiet: bool, profile: O
     return result
 
 
-def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, profile: Optional[str]) -> None:
+def run_loop(initial_task: str | None, mode: str, copy: bool, quiet: bool, profile: str | None) -> None:
     """Main interaction loop."""
     c = Colors
     current_mode = mode
+    last_result: dict | None = None
+    last_task_text: str | None = None
 
     # Setup readline completion if available
     if readline:
-        commands = ["/help", "/mode batch", "/mode detail", "/quit"]
-        
+        commands = ["/help", "/mode batch", "/mode detail", "/abbr", "/discuss", "/quit"]
+
         def completer(text, state):
             # Get the full line buffer to handle completion from start
             try:
                 line = readline.get_line_buffer()
             except Exception:
                 line = text
-            
+
             # If line starts with /, complete commands
             if line.startswith("/"):
                 options = [cmd for cmd in commands if cmd.startswith(line)]
             else:
                 options = [cmd for cmd in commands if cmd.startswith(text)]
-            
+
             if state < len(options):
                 return options[state]
             return None
@@ -1031,7 +516,7 @@ def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, pr
         readline.set_completer(completer)
         # Set delimiters to not include / so it's part of the completion text
         readline.set_completer_delims(' \t\n')
-        
+
         # Handle macOS (libedit) vs Linux (GNU readline) binding
         if readline.__doc__ and 'libedit' in readline.__doc__:
             # libedit requires specific binding format
@@ -1042,7 +527,7 @@ def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, pr
 
     # Show startup banner
     print(f"{c.CYAN}{STARTUP_BANNER.format(version=VERSION)}{c.RESET}")
-    
+
     # If no initial task provided, show commands and prompt for task name
     if not initial_task:
         print(LOOP_HELP)
@@ -1062,7 +547,7 @@ def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, pr
             # Handle commands starting with /
             if task_input.startswith("/"):
                 cmd = task_input.lower()
-                
+
                 # Show command menu for just /
                 if cmd == "/":
                     print(f"\n{c.CYAN}╭─────────────────────────────────────╮{c.RESET}")
@@ -1071,20 +556,34 @@ def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, pr
                     print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/h{c.RESET}            Show help           {c.CYAN}│{c.RESET}")
                     print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/m b{c.RESET}          Batch mode          {c.CYAN}│{c.RESET}")
                     print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/m d{c.RESET}          Detail mode         {c.CYAN}│{c.RESET}")
+                    print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/abbr{c.RESET}         Show abbreviations  {c.CYAN}│{c.RESET}")
                     print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/q{c.RESET}            Quit                {c.CYAN}│{c.RESET}")
                     print(f"{c.CYAN}╰─────────────────────────────────────╯{c.RESET}")
                     continue
-                
+
                 # Quit command (with shortcuts)
                 if cmd in ("/quit", "/q"):
                     print(f"{c.GRAY}Take care.{c.RESET}")
                     break
-                
+
                 # Help command (with shortcuts)
                 if cmd in ("/help", "/h"):
                     print(LOOP_HELP)
                     continue
-                
+
+                # Abbreviations command
+                if cmd in ("/abbr", "/abbreviations"):
+                    from .abbreviations import render_lines
+                    print(f"\n{c.CYAN}Abbreviations vocabulary{c.RESET}")
+                    print(f"{c.DIM}{'─' * 42}{c.RESET}")
+                    for line in render_lines():
+                        if line.startswith("──"):
+                            print(f"{c.GOLD}{line}{c.RESET}")
+                        else:
+                            print(line)
+                    print(f"{c.DIM}{'─' * 42}{c.RESET}")
+                    continue
+
                 # Mode command
                 if cmd.startswith("/mode") or cmd.startswith("/m "):
                     parts = task_input.split()
@@ -1102,12 +601,36 @@ def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, pr
                     else:
                         print(f"{c.GRAY}Current mode: {current_mode}. Use: /mode batch or /mode detail{c.RESET}")
                     continue
-                
+
+                # Discuss command (LLM verifier, opt-in)
+                if cmd in ("/discuss", "/d"):
+                    from .llm import discuss, is_enabled
+                    if not is_enabled():
+                        print(f"{c.GRAY}LLM disabled. Set TASK_PRIORITIZER_LLM_ENABLED=1 to enable.{c.RESET}")
+                        continue
+                    if not last_result or not last_task_text:
+                        print(f"{c.GRAY}Score a task first, then /discuss it.{c.RESET}")
+                        continue
+                    print(f"{c.GRAY}Asking the model… (Ctrl-C to cancel){c.RESET}")
+                    try:
+                        verdict = discuss(last_task_text, last_result)
+                    except Exception as exc:
+                        print(f"{c.GRAY}LLM unreachable: {exc}{c.RESET}")
+                        continue
+                    if verdict is None:
+                        print(f"{c.GRAY}LLM unavailable. Check Ollama is running on localhost:11434.{c.RESET}")
+                    else:
+                        print(f"\n{c.CYAN}── {verdict.used_model} ──{c.RESET}")
+                        print(verdict.text)
+                        print(f"{c.DIM}{'─' * 42}{c.RESET}")
+                    continue
+
                 # Unknown command - show suggestions
                 print(f"{c.GRAY}Unknown command '{task_input}'. Type / to see available commands.{c.RESET}")
                 continue
 
-            process_task(task_input, current_mode, copy, quiet, profile)
+            last_result = process_task(task_input, current_mode, copy, quiet, profile)
+            last_task_text = task_input
 
         except KeyboardInterrupt:
             print(f"\n{c.GRAY}Take care.{c.RESET}")
@@ -1120,7 +643,7 @@ def run_loop(initial_task: Optional[str], mode: str, copy: bool, quiet: bool, pr
 def run_demo() -> None:
     """
     Run in demo mode for automated testing by AI agents.
-    
+
     This mode simulates the complete interactive flow non-interactively:
     1. Shows startup banner
     2. Simulates menu invocation (TAB)
@@ -1129,24 +652,24 @@ def run_demo() -> None:
     5. Switches to DETAIL mode
     6. Processes demo task in DETAIL mode
     7. Shows /quit
-    
+
     Purpose:
     - Allow AI agents to analyze the tool's input/output behavior
     - Enable automated testing in CI/CD pipelines
     - Test both batch and detail modes in a single run
     """
     c = Colors
-    
+
     def demo_step(step_num: int, description: str):
         """Print a demo step header."""
         print(f"\n{c.ORANGE}{'━' * 60}{c.RESET}")
         print(f"{c.ORANGE}STEP {step_num}: {description}{c.RESET}")
         print(f"{c.ORANGE}{'━' * 60}{c.RESET}")
-    
+
     def simulate_input(prompt: str, value: str):
         """Simulate user input display."""
         print(f"{c.WHITE}{prompt}{c.CYAN}{value}{c.RESET}")
-    
+
     # Header
     print(f"{c.CYAN}{'═' * 60}{c.RESET}")
     print(f"{c.BOLD}DEMO MODE — Full Integration Test{c.RESET}")
@@ -1154,18 +677,18 @@ def run_demo() -> None:
     print(f"\n{c.GRAY}Testing both BATCH and DETAIL modes with complete flow.{c.RESET}")
     print(f"{c.GRAY}Demo Task:    {Config.DEMO_TASK}{c.RESET}")
     print(f"{c.GRAY}Demo Ratings: {Config.DEMO_RATINGS}{c.RESET}")
-    
+
     # Parse and validate demo configuration
     task_input = Config.DEMO_TASK
     tags, text, planned_mins = parse_task(task_input)
     ratings = parse_ratings(Config.DEMO_RATINGS, planned_mins)
-    
+
     if ratings is None:
         print(f"\n{c.RED}Error: Invalid DEMO_RATINGS in configuration.{c.RESET}")
-        print(f"  Expected: 11 or 12 comma-separated values (0-3)")
+        print("  Expected: 11 or 12 comma-separated values (0-3)")
         print(f"  Got:      {Config.DEMO_RATINGS}")
         sys.exit(1)
-    
+
     # Calculate estimated time
     estimated_mins = None
     if planned_mins is None:
@@ -1173,24 +696,24 @@ def run_demo() -> None:
         r_risk = ratings[7]
         r_surprise = ratings[9]
         estimated_mins = estimate_time_minutes(r_complex, r_risk, r_surprise)
-    
+
     # Split ratings into category groups for simulation
     ratings_str = Config.DEMO_RATINGS.split(',')
     # Ensure we have 12 values for the demo (append 0 if legacy 11 used)
     if len(ratings_str) == 11:
         ratings_str.append('0')
-        
+
     impact_input = f"{ratings_str[0]},{ratings_str[1]},{ratings_str[2]}"
     urgency_input = f"{ratings_str[3]},{ratings_str[4]}"
     exec_input = f"{ratings_str[5]},{ratings_str[6]},{ratings_str[7]},{ratings_str[8]}"
     clarity_input = f"{ratings_str[9]},{ratings_str[10]},{ratings_str[11]}"
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 1: App Startup - Show Banner
     # ═══════════════════════════════════════════════════════════════
     demo_step(1, "App Startup - Show Banner")
     print(f"{c.CYAN}{STARTUP_BANNER.format(version=VERSION)}{c.RESET}")
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 2: Simulate Menu Invocation (TAB pressed)
     # ═══════════════════════════════════════════════════════════════
@@ -1204,20 +727,20 @@ def run_demo() -> None:
     print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/m d{c.RESET}          Detail mode         {c.CYAN}│{c.RESET}")
     print(f"{c.CYAN}│{c.RESET}  {c.WHITE}/q{c.RESET}            Quit                {c.CYAN}│{c.RESET}")
     print(f"{c.CYAN}╰─────────────────────────────────────╯{c.RESET}")
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 3: Show /help Output
     # ═══════════════════════════════════════════════════════════════
     demo_step(3, "Command: /help")
     simulate_input("> ", "/help")
     print(LOOP_HELP)
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 4: Process Task in BATCH Mode
     # ═══════════════════════════════════════════════════════════════
     demo_step(4, "BATCH MODE - Process Demo Task")
     print(f"{c.GRAY}Mode: batch (default){c.RESET}\n")
-    
+
     # Simulate entering the task
     simulate_input("> ", task_input)
     print(f"\n{c.BOLD}Task:{c.RESET} {text}")
@@ -1225,27 +748,27 @@ def run_demo() -> None:
         print(f"{c.GRAY}Tags: {tags}{c.RESET}")
     if planned_mins is not None:
         print(f"{c.GRAY}Planned: {planned_mins}m{c.RESET}")
-    
+
     # Simulate batch mode prompts
     dm = Config.DISPLAY_MAP
     print(f"\n{c.CYAN}Scale: 0={dm['0']} │ 1={dm['1']} │ 2={dm['2']} │ 3={dm['3']}{c.RESET}")
-    
+
     print(f"\n{c.GOLD}Impact{c.RESET} {c.GRAY}(L=Leverage, Conf=Confidence, G=Goals){c.RESET}")
     print(f"{c.DIM}  L: Will this make future work easier? │ Conf: Is the path clear? │ G: Does this move the needle?{c.RESET}")
     simulate_input(f"{c.GOLD}L,Conf,G: {c.RESET}", impact_input)
-    
+
     print(f"\n{c.RED}Urgency{c.RESET} {c.GRAY}(P=Priority, D=Deadline){c.RESET}")
     print(f"{c.DIM}  P: What happens if I don't do this today? │ D: When is this due?{c.RESET}")
     simulate_input(f"{c.RED}P,D: {c.RESET}", urgency_input)
-    
+
     print(f"\n{c.MAGENTA}Execution{c.RESET} {c.GRAY}(C=Complex, T=Time, R=Risk, F=Fun){c.RESET}")
     print(f"{c.DIM}  C: Deep focus needed? │ T: How long? │ R: Unknowns that could derail? │ F: Looking forward to it?{c.RESET}")
     simulate_input(f"{c.MAGENTA}C,T,R,F: {c.RESET}", exec_input)
-    
+
     print(f"\n{c.GREEN}Clarity{c.RESET} {c.GRAY}(S=Surprise, Pl=Planned, Rec=Recurrent){c.RESET}")
     print(f"{c.DIM}  S: Do I know what 'done' looks like? │ Pl: Did I decide to do this? │ Rec: Is this repeating?{c.RESET}")
     simulate_input(f"{c.GREEN}S,Pl,Rec: {c.RESET}", clarity_input)
-    
+
     # Process and show result
     result_batch = run_with_ratings(task_input, ratings, estimated_mins)
     print(f"\n{c.DIM}{'═' * 42}{c.RESET}")
@@ -1257,57 +780,57 @@ def run_demo() -> None:
     print(f"{c.CYAN}{result_batch.get('analysis', '')}{c.RESET}")
     print(f"{c.DIM}{'═' * 42}{c.RESET}")
     log_task(task_input, result_batch, "demo-batch", None)
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 5: Switch to Detail Mode
     # ═══════════════════════════════════════════════════════════════
     demo_step(5, "Command: /mode detail")
     simulate_input("> ", "/mode detail")
     print(f"{c.GREEN}Switched to detail mode.{c.RESET}")
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 6: Process Task in DETAIL Mode
     # ═══════════════════════════════════════════════════════════════
     demo_step(6, "DETAIL MODE - Process Demo Task")
     print(f"{c.GRAY}Mode: detail (with explanations){c.RESET}\n")
-    
+
     # Show detail mode explanation excerpt
     print(f"{c.CYAN}Understanding the Rating System (excerpt):{c.RESET}")
     print(f"{c.GRAY}This prioritization system scores tasks across 4 categories.{c.RESET}")
     print(f"{c.GRAY}High Impact + Low Execution = Quick wins (do first){c.RESET}")
     print(f"{c.GRAY}High Impact + High Execution = Strategic investments (schedule){c.RESET}")
     print(f"{c.GRAY}...{c.RESET}\n")
-    
+
     # Simulate entering the task
     simulate_input("> ", task_input)
     print(f"\n{c.BOLD}Task:{c.RESET} {text}")
     if tags:
         print(f"{c.GRAY}Tags: {tags}{c.RESET}")
-    
+
     print(f"\n{c.CYAN}Scale: 0={dm['0']} │ 1={dm['1']} │ 2={dm['2']} │ 3={dm['3']}{c.RESET}")
     print(f"{c.DIM}{'─' * 42}{c.RESET}")
-    
+
     # Simulate detail mode prompts (individual ratings)
     print(f"\n{c.GOLD}── Impact ──{c.RESET}")
     simulate_input(f"{c.GOLD}Leverage   (L): {c.RESET}", ratings_str[0])
     simulate_input(f"{c.GOLD}Confidence (Conf): {c.RESET}", ratings_str[1])
     simulate_input(f"{c.GOLD}Goals      (G): {c.RESET}", ratings_str[2])
-    
+
     print(f"\n{c.RED}── Urgency ──{c.RESET}")
     simulate_input(f"{c.RED}Priority (P): {c.RESET}", ratings_str[3])
     simulate_input(f"{c.RED}Deadline (D): {c.RESET}", ratings_str[4])
-    
+
     print(f"\n{c.MAGENTA}── Execution ──{c.RESET}")
     simulate_input(f"{c.MAGENTA}Complex  (C): {c.RESET}", ratings_str[5])
     simulate_input(f"{c.MAGENTA}Time     (T): {c.RESET}", ratings_str[6])
     simulate_input(f"{c.MAGENTA}Risk     (R): {c.RESET}", ratings_str[7])
     simulate_input(f"{c.MAGENTA}Fun      (F): {c.RESET}", ratings_str[8])
-    
+
     print(f"\n{c.GREEN}── Clarity ──{c.RESET}")
     simulate_input(f"{c.GREEN}Surprise (S): {c.RESET}", ratings_str[9])
     simulate_input(f"{c.GREEN}Planned  (Pl): {c.RESET}", ratings_str[10])
     simulate_input(f"{c.GREEN}Recurrent (Rec): {c.RESET}", ratings_str[11])
-    
+
     # Process and show result
     result_detail = run_with_ratings(task_input, ratings, estimated_mins)
     print(f"\n{c.DIM}{'═' * 42}{c.RESET}")
@@ -1319,14 +842,14 @@ def run_demo() -> None:
     print(f"{c.CYAN}{result_detail.get('analysis', '')}{c.RESET}")
     print(f"{c.DIM}{'═' * 42}{c.RESET}")
     log_task(task_input, result_detail, "demo-detail", None)
-    
+
     # ═══════════════════════════════════════════════════════════════
     # STEP 7: Quit
     # ═══════════════════════════════════════════════════════════════
     demo_step(7, "Command: /quit")
     simulate_input("> ", "/quit")
     print(f"{c.GRAY}Take care.{c.RESET}")
-    
+
     # ═══════════════════════════════════════════════════════════════
     # Summary
     # ═══════════════════════════════════════════════════════════════
@@ -1340,15 +863,15 @@ def run_demo() -> None:
     print(f"{c.GREEN}✓ Mode switch to detail{c.RESET}")
     print(f"{c.GREEN}✓ DETAIL mode: task processed successfully{c.RESET}")
     print(f"{c.GREEN}✓ /quit command executed{c.RESET}")
-    print(f"\n{c.GRAY}Results logged to: logs/tasks.log{c.RESET}")
+    print(f"\n{c.GRAY}Results logged to: {_get_log_path()}{c.RESET}")
     print(f"{c.GRAY}Modes tested: demo-batch, demo-detail{c.RESET}")
-    
+
     # Verify outputs match
     if result_batch['output'] == result_detail['output']:
         print(f"\n{c.GREEN}✓ Output consistency: BATCH and DETAIL modes produce identical results{c.RESET}")
     else:
         print(f"\n{c.RED}✗ Output mismatch between modes (investigate){c.RESET}")
-    
+
     print(f"\n{c.CYAN}{'═' * 60}{c.RESET}")
     print(f"{c.GREEN}Demo completed successfully.{c.RESET}")
     print(f"{c.CYAN}{'═' * 60}{c.RESET}")

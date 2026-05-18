@@ -1,27 +1,27 @@
 import pytest
+
+from task_prioritizer.config import Config
 from task_prioritizer.main import (
-    parse_task,
-    get_time_score,
+    Colors,
+    colorize_output,
+    compute_execution,
     compute_impact,
     compute_urgency,
-    compute_execution,
-    get_impact_symbol,
-    get_urgency_symbol,
+    estimate_time_minutes,
+    format_output,
     get_execution_symbol,
-    get_surprise_symbol,
+    get_impact_symbol,
     get_planned_symbol,
     get_recurrent_symbol,
-    format_output,
+    get_surprise_symbol,
+    get_time_score,
+    get_urgency_symbol,
     parse_ratings,
-    run_with_ratings,
-    colorize_output,
+    parse_task,
     prompt_batch_ratings,
     prompt_grouped_batch_ratings,
-    estimate_time_minutes,
-    get_analysis_text,
-    Colors,
+    run_with_ratings,
 )
-from task_prioritizer.config import Config
 
 
 class TestParseTask:
